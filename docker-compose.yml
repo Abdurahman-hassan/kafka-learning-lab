@@ -1,0 +1,188 @@
+version: '2'
+services:
+  # ============================================================================
+  # ZOOKEEPER
+  # The centralized manager for the cluster. It keeps track of status,
+  # distinct topics, and partitions. Brokers cannot run without it.
+  # ============================================================================
+  zk:
+    image: confluentinc/cp-zookeeper:7.6.1
+    hostname: zk
+    container_name: zk
+    ports:
+      - "2181:2181"
+    environment:
+      # The port where Zookeeper listens for connections from Kafka Brokers.
+      ZOOKEEPER_CLIENT_PORT: 2181
+      # The basic time unit (in milliseconds) used by ZooKeeper.
+      # Heartbeats and timeouts are defined as multiples of this tick time.
+      # 2000ms = 2 seconds.
+      ZOOKEEPER_TICK_TIME: 2000
+
+  # ============================================================================
+  # BROKER 0 (First Kafka Node)
+  # ============================================================================
+  broker0:
+    image: confluentinc/cp-kafka:7.6.1
+    hostname: broker0
+    container_name: broker0
+    depends_on:
+      - zk
+    ports:
+      # Exposes port 29092 for internal Docker communication
+      - "29092:29092"
+      # Exposes port 9092 to your Host Machine (MacBook) so you can connect from PyCharm
+      - "9092:9092"
+    environment:
+      # A unique integer identifier for this broker in the cluster.
+      KAFKA_BROKER_ID: 0
+
+      # Points the broker to the Zookeeper container defined above.
+      KAFKA_ZOOKEEPER_CONNECT: 'zk:2181'
+
+      # Maps security protocols to listener names.
+      # Here we are using PLAINTEXT (no encryption) for both internal and external traffic.
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+
+      # -----------------------------------------------------------------------
+      # CRITICAL NETWORK CONFIGURATION
+      # Defines the return address the broker sends back to clients.
+      # 1. PLAINTEXT: Internal Docker address (broker0:29092) for other containers.
+      # 2. PLAINTEXT_HOST: External Host address (localhost:9092) for your Python scripts.
+      # -----------------------------------------------------------------------
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker0:29092,PLAINTEXT_HOST://localhost:9092
+
+      # The minimum number of replicas that must acknowledge a write for it to be considered successful.
+      # Setting this to 2 ensures high durability (at least 2 brokers must have the data).
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+
+      # When a new topic is created, how many copies of the data should exist?
+      # 3 means data is copied to broker0, broker1, and broker2.
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+
+      # Default number of splits (shards) for new topics to allow parallel processing.
+      KAFKA_NUM_PARTITIONS: 3
+
+  # ============================================================================
+  # BROKER 1 (Second Kafka Node)
+  # Identical config to Broker 0, but with unique Ports and ID.
+  # ============================================================================
+  broker1:
+    image: confluentinc/cp-kafka:7.6.1
+    hostname: broker1
+    container_name: broker1
+    depends_on:
+      - zk
+    ports:
+      - "29093:29093"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zk:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      # Note the different ports here: 29093 (internal) and 9093 (external)
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker1:29093,PLAINTEXT_HOST://localhost:9093
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_NUM_PARTITIONS: 3
+
+  # ============================================================================
+  # BROKER 2 (Third Kafka Node)
+  # Identical config to Broker 0/1, but with unique Ports and ID.
+  # ============================================================================
+  broker2:
+    image: confluentinc/cp-kafka:7.6.1
+    hostname: broker2
+    container_name: broker2
+    depends_on:
+      - zk
+    ports:
+      - "29094:29094"
+      - "9094:9094"
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: 'zk:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      # Note the different ports here: 29094 (internal) and 9094 (external)
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker2:29094,PLAINTEXT_HOST://localhost:9094
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_NUM_PARTITIONS: 3
+
+  # ============================================================================
+  # SCHEMA REGISTRY
+  # Stores Avro/Protobuf/JSON schemas so producers and consumers
+  # understand the data structure without sending the full schema in every message.
+  # ============================================================================
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.1
+    hostname: schema-registry
+    container_name: schema-registry
+    depends_on:
+      - broker0
+      - broker1
+      - broker2
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      # Schema Registry uses Kafka itself to store the schemas (in a topic called _schemas).
+      # It connects via the internal Docker network ports (29092, 29093, 29094).
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker0:29092,broker1:29093,broker2:29094'
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+
+  # ============================================================================
+  # KAFKA CONNECT
+  # A tool for streaming data between Kafka and other systems (Databases, S3, Elasticsearch).
+  # ============================================================================
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect-base:7.6.1
+    container_name: kafka-connect
+    hostname: kafka-connect
+    depends_on:
+      - broker0
+      - broker1
+      - broker2
+      - schema-registry
+    ports:
+      - "8083:8083"
+    environment:
+      # Connect needs to join the Kafka cluster to function.
+      CONNECT_BOOTSTRAP_SERVERS: "broker0:29092,broker1:29093,broker2:29094"
+
+      # The port where you can make REST API calls to create/manage connectors.
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: kafka-connect
+
+      # Kafka Connect stores its own configuration, offsets, and status in internal Kafka topics.
+      CONNECT_CONFIG_STORAGE_TOPIC: _connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: _connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: _connect-status
+
+      # Configuration for Data Serialization.
+      # Here: Keys are simple Strings, Values are Avro (which requires Schema Registry).
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
+
+      # Network identity for the Connect worker.
+      CONNECT_REST_ADVERTISED_HOST_NAME: "kafka-connect"
+
+      # Logging configuration to make debugging easier.
+      CONNECT_LOG4J_APPENDER_STDOUT_LAYOUT_CONVERSIONPATTERN: "[%d] %p %X{connector.context}%m (%c:%L)%n"
+
+      # Where the connector JAR files (plugins) are stored inside the container.
+      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components,/data/connect-jars
+
+  # ============================================================================
+  # CLI TOOLS
+  # A utility container. Instead of installing Kafka tools (kafka-topics, kafka-console-producer)
+  # on your Mac, you can run them from inside this container.
+  # ============================================================================
+  cli-tools:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: cli-tools
+    # "sleep infinity" effectively keeps the container running forever so you can
+    # log in to it whenever you want.
+    entrypoint: "sleep infinity"
+    restart: always
