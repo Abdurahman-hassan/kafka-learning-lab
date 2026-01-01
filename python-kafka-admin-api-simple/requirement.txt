@@ -1,4 +1,9 @@
-kafka-python==2.0.2
+kafka-python==2.3.0
 fastapi>=0.110,<1.0
 uvicorn[standard]>=0.27,<1.0
 python-dotenv==0.20.0
+# MCP stdio server dependencies (required for Claude Desktop)
+mcp>=1.0.0
+httpx>=0.27.0
+# Optional: fastapi-mcp for HTTP MCP endpoint (only needed if ENABLE_MCP_HTTP=true)
+# fastapi-mcp>=0.1.0
