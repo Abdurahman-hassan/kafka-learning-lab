@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from faker import Faker
 from kafka import KafkaAdminClient
 from kafka.admin import NewTopic
-from kafka.errors import TopicAlreadyExistsError
+from kafka.errors import TopicAlreadyExistsError, NoBrokersAvailable
 from kafka.producer import KafkaProducer
 
 
@@ -26,16 +26,24 @@ app = FastAPI()
 
 @app.on_event('startup')
 async def startup_event():
-  client = KafkaAdminClient(bootstrap_servers=os.environ['BOOTSTRAP_SERVERS'])
   try:
-    topic = NewTopic(name=os.environ['TOPICS_PEOPLE_ADV_NAME'],
-                    num_partitions=int(os.environ['TOPICS_PEOPLE_ADV_PARTITIONS']),
-                    replication_factor=int(os.environ['TOPICS_PEOPLE_ADV_REPLICAS']))
-    client.create_topics([topic])
-  except TopicAlreadyExistsError as e:
-    print(e)
-  finally:
-    client.close()
+    client = KafkaAdminClient(bootstrap_servers=os.environ['BOOTSTRAP_SERVERS'])
+    try:
+      topic = NewTopic(name=os.environ['TOPICS_PEOPLE_ADV_NAME'],
+                      num_partitions=int(os.environ['TOPICS_PEOPLE_ADV_PARTITIONS']),
+                      replication_factor=int(os.environ['TOPICS_PEOPLE_ADV_REPLICAS']))
+      client.create_topics([topic])
+      logger.info(f"Topic {os.environ['TOPICS_PEOPLE_ADV_NAME']} created or already exists")
+    except TopicAlreadyExistsError as e:
+      logger.info(f"Topic already exists: {e}")
+    except Exception as e:
+      logger.warning(f"Failed to create topic: {e}")
+    finally:
+      client.close()
+  except NoBrokersAvailable:
+    logger.warning("Kafka brokers are not available. Please ensure Kafka is running. The application will start but topic creation will be skipped.")
+  except Exception as e:
+    logger.warning(f"Failed to connect to Kafka during startup: {e}. The application will start but topic creation will be skipped.")
 
 
 def make_producer():
